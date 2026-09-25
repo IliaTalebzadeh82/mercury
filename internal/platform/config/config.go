@@ -11,17 +11,19 @@ import (
 const (
 	defaultHTTPAddress        = ":8080"
 	defaultDatabasePing       = 2 * time.Second
+	defaultDatabaseOperation  = 3 * time.Second
 	defaultShutdownTimeout    = 10 * time.Second
 	defaultLogLevel           = "info"
 	minimumOperationalTimeout = 100 * time.Millisecond
 )
 
 type Config struct {
-	HTTPAddress         string
-	DatabaseURL         string
-	DatabasePingTimeout time.Duration
-	ShutdownTimeout     time.Duration
-	LogLevel            slog.Level
+	HTTPAddress              string
+	DatabaseURL              string
+	DatabasePingTimeout      time.Duration
+	DatabaseOperationTimeout time.Duration
+	ShutdownTimeout          time.Duration
+	LogLevel                 slog.Level
 }
 
 func Load() (Config, error) {
@@ -35,6 +37,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	databaseOperationTimeout, err := duration("MERCURY_DATABASE_OPERATION_TIMEOUT", defaultDatabaseOperation)
+	if err != nil {
+		return Config{}, err
+	}
 	shutdownTimeout, err := duration("MERCURY_SHUTDOWN_TIMEOUT", defaultShutdownTimeout)
 	if err != nil {
 		return Config{}, err
@@ -45,11 +51,12 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		HTTPAddress:         httpAddress,
-		DatabaseURL:         databaseURL,
-		DatabasePingTimeout: databasePingTimeout,
-		ShutdownTimeout:     shutdownTimeout,
-		LogLevel:            logLevel,
+		HTTPAddress:              httpAddress,
+		DatabaseURL:              databaseURL,
+		DatabasePingTimeout:      databasePingTimeout,
+		DatabaseOperationTimeout: databaseOperationTimeout,
+		ShutdownTimeout:          shutdownTimeout,
+		LogLevel:                 logLevel,
 	}, nil
 }
 

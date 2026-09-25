@@ -1,4 +1,4 @@
-# Phase 0 architecture
+# Architecture through Phase 1
 
 ## Runtime topology
 
@@ -8,17 +8,29 @@ Mercury currently has three runtime components:
 Browser -> Next.js operations shell -> Go HTTP application -> PostgreSQL
 ```
 
-The Next.js server reads the backend operational endpoints. It converts a
+The Next.js server reads the backend operational and campaign-control APIs. It converts a
 backend readiness response into one of four presentation states: healthy,
 degraded, unavailable, or frontend-misconfigured. It contains no authoritative
 business logic.
 
-The Go application is one deployable modular monolith. `cmd/mercury` is the
+The Go application remains one deployable modular monolith. `cmd/mercury` is the
 composition root. Code under `internal/platform` owns only configuration,
 database connectivity, and HTTP lifecycle concerns. Domain packages will be
 introduced only when their behavior exists.
 
-PostgreSQL is the sole datastore. Phase 0 does not create a production schema.
+PostgreSQL is the sole datastore. Phase 1 adds advertiser and campaign
+transactional state without creating a separate service or datastore.
+
+## Campaign control plane
+
+`internal/advertiser` owns advertiser creation and lookup.
+`internal/campaign` owns campaign configuration, lifecycle, targeting, and
+PostgreSQL transactions. `internal/api` adapts those commands to HTTP without
+owning domain rules. The platform server mounts the API as an `http.Handler` and
+does not import either domain package.
+
+The browser continues to use the Next.js server boundary. Backend topology and
+`MERCURY_API_URL` are not exposed through public client configuration.
 
 ## Startup
 
@@ -65,17 +77,14 @@ actual orchestrator or load balancer exists.
 
 ## Migration boundary
 
-Production migrations belong in `migrations/`, alongside the production state
-they introduce. Phase 0 has no production state, so that directory contains no
-SQL migration. Goose mechanics are verified through a reversible fixture in
-`testdata/migrations`, which is never a production migration source. The
-fixture runs only against the disposable `mercury_migration_test` database;
-that database is reset before and after verification so its Goose metadata can
-never conflict with the application database.
+Production migrations belong in `migrations/`. Their up/down/reapply behavior
+runs only against `mercury_migration_test`. Real domain and concurrency tests
+run against separately recreated `mercury_integration_test`; neither workflow
+destructively initializes the normal `mercury` development database.
 
 ## Deliberately absent
 
-There are no campaign, budget, serving, event, measurement, attribution,
-analytics, cache, or messaging abstractions. Kafka, Redis, ClickHouse,
-Kubernetes, Helm, Terraform, gRPC, GraphQL, ORMs, Redux, and ML are outside the
-Phase 0 boundary.
+There are no serving, spend, reservation, pacing, event, measurement,
+attribution, analytics, cache, or messaging abstractions. Kafka, Redis, ClickHouse,
+Kubernetes, Helm, Terraform, gRPC, GraphQL, ORMs, Redux, and ML remain outside
+the Phase 1 boundary.

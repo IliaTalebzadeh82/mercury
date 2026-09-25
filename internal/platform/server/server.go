@@ -20,13 +20,16 @@ type Server struct {
 	ready       atomic.Bool
 }
 
-func New(pingTimeout time.Duration, logger *slog.Logger, database *pgxpool.Pool) *Server {
+func New(pingTimeout time.Duration, logger *slog.Logger, database *pgxpool.Pool, apiHandlers ...http.Handler) *Server {
 	server := &Server{database: database, pingTimeout: pingTimeout}
 	server.ready.Store(true)
 
 	router := chi.NewRouter()
 	router.Get("/healthz", server.health)
 	router.Get("/readyz", server.readiness)
+	if len(apiHandlers) == 1 && apiHandlers[0] != nil {
+		router.Mount("/v1", apiHandlers[0])
+	}
 
 	server.httpServer = &http.Server{
 		Handler:           router,

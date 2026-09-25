@@ -5,10 +5,11 @@ low-latency serving systems make economically correct decisions under
 concurrent budgets, asynchronous state, high-volume event streams, and partial
 failure.
 
-The project begins as a modular monolith. Phase 0 contains only the engineering
-foundation: a Go HTTP process, PostgreSQL connectivity, operational health
-contracts, migration tooling, and a Next.js operations shell. It intentionally
-contains no campaign, budget, serving, event, attribution, or analytics model.
+The project is a modular monolith. Phase 1 adds a transactional campaign control
+plane for advertisers, platform placements, configured lifetime budgets,
+country targeting, lifecycle commands, idempotent creation, and optimistic
+operator concurrency. It intentionally contains no serving, spend, reservation,
+pacing, event, attribution, or analytics model.
 
 Mercury is inspired by publicly discussed engineering problems in large-scale
 advertising marketplaces. It is not associated with, and does not claim to
@@ -69,6 +70,7 @@ misconfigured state.
 | `MERCURY_DATABASE_URL` | yes | none | Backend PostgreSQL connection string |
 | `MERCURY_HTTP_ADDRESS` | no | `:8080` | Backend listen address |
 | `MERCURY_DATABASE_PING_TIMEOUT` | no | `2s` | Startup and readiness database timeout |
+| `MERCURY_DATABASE_OPERATION_TIMEOUT` | no | `3s` | Normal application database-operation deadline |
 | `MERCURY_SHUTDOWN_TIMEOUT` | no | `10s` | Graceful HTTP shutdown deadline |
 | `MERCURY_LOG_LEVEL` | no | `info` | `slog` level |
 | `MERCURY_TEST_DATABASE_URL` | integration tests | none | Real PostgreSQL used by backend tests |
@@ -82,7 +84,7 @@ See `.env.example` for local values. Never commit real credentials.
 With PostgreSQL running, the complete local gate is:
 
 ```sh
-MERCURY_TEST_DATABASE_URL='postgres://mercury:mercury@localhost:55432/mercury?sslmode=disable' \
+MERCURY_TEST_DATABASE_URL='postgres://mercury:mercury@localhost:55432/mercury_integration_test?sslmode=disable' \
 MERCURY_MIGRATION_TEST_DATABASE_URL='postgres://mercury:mercury@localhost:55432/mercury_migration_test?sslmode=disable' \
   make check
 ```
@@ -99,19 +101,30 @@ pnpm install --frozen-lockfile
 pnpm lint
 pnpm test
 pnpm build
+pnpm exec playwright install chromium
+pnpm e2e
 ```
 
 `make migrate-test` resets the dedicated `mercury_migration_test` database,
-applies the fixture under `testdata/migrations`, verifies version and table
-state, rolls it back and verifies cleanup, reapplies and verifies it, then
-resets the dedicated database again. It never shares Goose metadata with the
-normal `mercury` database. The production `migrations/` set remains
-intentionally empty until a real domain schema exists.
+applies the production migration, verifies placement seeds and deferred country
+cardinality, rolls back and verifies cleanup, reapplies, then resets the
+database. Integration tests recreate `mercury_integration_test`. Neither shares
+Goose metadata or destructive setup with the normal `mercury` database.
+
+## Campaign API
+
+The Phase 1 API is mounted at `/v1`. Creation requires `Idempotency-Key`.
+Campaign mutations use the current strong ETag as `If-Match`; missing, malformed,
+and stale preconditions return 428, 400, and 412 respectively. See
+[`docs/domain-model.md`](docs/domain-model.md) and
+[`docs/invariants.md`](docs/invariants.md) for the exact semantics.
 
 ## Architecture records
 
 - [ADR 001: Begin as a modular monolith](adr/001-modular-monolith.md)
 - [ADR 002: PostgreSQL is the transactional source of truth](adr/002-postgresql-source-of-truth.md)
+- [ADR 003: Control-plane concurrency and retry semantics](adr/003-control-plane-concurrency-and-retries.md)
+- [ADR 004: Typed relational country targeting](adr/004-typed-relational-country-targeting.md)
 
 The current topology and operational contracts are described in
 [docs/architecture.md](docs/architecture.md).

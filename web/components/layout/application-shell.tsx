@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Activity } from "lucide-react";
+import Link from "next/link";
 
 export function ApplicationShell({ children }: { children: ReactNode }) {
   return (
@@ -13,6 +14,10 @@ export function ApplicationShell({ children }: { children: ReactNode }) {
             <p className="font-semibold tracking-tight text-slate-950">Mercury</p>
             <p className="text-xs text-slate-500">Operations console</p>
           </div>
+          <nav className="ml-auto flex gap-4 text-sm font-medium text-slate-600" aria-label="Primary">
+            <Link href="/">Platform health</Link>
+            <Link href="/advertisers">Advertisers</Link>
+          </nav>
         </div>
       </header>
       <div className="mx-auto max-w-6xl px-6 py-10">{children}</div>
