@@ -1,4 +1,4 @@
-# Domain model through Phase 2
+# Domain model through Phase 3
 
 ## Advertiser
 
@@ -20,7 +20,7 @@ placement, one immutable currency, one positive lifetime configured budget,
 and at least one country target.
 
 Money is an integer count of minor units. Phase 1 supports EUR, GBP, and USD.
-There is no spend, remaining amount, reservation, pacing, or currency conversion.
+There is no reservation, pacing, or currency conversion.
 
 Country targeting is a normalized set of uppercase two-letter codes. Phase 1
 validates their shape, not membership in a country-catalog subsystem.
@@ -67,3 +67,30 @@ for passwords, tokens, signatures, or any security purpose.
 The same opportunity and committed candidate set therefore produce the same
 winner. Each successful evaluation—including no-fill—receives a fresh transient
 random UUIDv4 `decision_id`. Neither opportunity nor decision is stored.
+
+## Budget account and immediate consumption
+
+Every campaign has one configured budget and a transactionally maintained
+committed-spend aggregate in the same immutable currency. Current remaining
+budget is derived, never independently stored:
+
+```text
+remaining budget = configured budget - committed spend
+```
+
+An immediate budget-consumption command asks Mercury to commit a positive
+minor-unit amount now. It does not mean an ad was rendered, an impression
+occurred, delivery was confirmed, or money was reserved. Only an `ACTIVE`
+campaign can approve consumption. Completed outcomes are `APPROVED`,
+`INSUFFICIENT_BUDGET`, and `CAMPAIGN_NOT_ACTIVE`; all three are immutable and
+idempotently replayable.
+
+`ACTIVE` continues to mean enabled in the control plane, not guaranteed
+spendable. An active campaign may have zero remaining budget. Phase 2 can select
+it, and a later independent consumption can return `INSUFFICIENT_BUDGET`. This
+gap is intentional in Phase 3.
+
+Approved consumption receipts are the reconstructable spend history.
+`campaigns.committed_spend_minor` is the fast enforcement aggregate. Phase 3
+contains no reservation, pending accounting state, late charge, expiration,
+release, or automatic exhausted lifecycle.

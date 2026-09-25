@@ -4,14 +4,18 @@ import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import type { ActionResult } from "@/lib/action-result";
-import type { Campaign, Placement } from "./api";
-import { transitionCampaign, updateBudget, updateName, updatePlacement, updateTargeting } from "./actions";
+import type { BudgetAccount, BudgetConsumption, Campaign, Placement } from "./api";
+import { consumeBudget, transitionCampaign, updateBudget, updateName, updatePlacement, updateTargeting } from "./actions";
 
-export function CampaignDetail({ campaign, placements }: { campaign: Campaign; placements: Placement[] }) {
+export function CampaignDetail({ campaign, placements, budget }: { campaign: Campaign; placements: Placement[]; budget: BudgetAccount }) {
   const router = useRouter();
   const [result, setResult] = useState<ActionResult>();
   const [pending, setPending] = useState(false);
   const [awaitingVersion, setAwaitingVersion] = useState<number>();
+  const [consumption, setConsumption] = useState<BudgetConsumption>();
+  const [consumptionMessage, setConsumptionMessage] = useState<string>();
+  const [consumptionPending, setConsumptionPending] = useState(false);
+  const [retryKey, setRetryKey] = useState<string>();
 
   async function execute(command: () => Promise<ActionResult>) {
     setPending(true); setResult(undefined);
@@ -35,16 +39,38 @@ export function CampaignDetail({ campaign, placements }: { campaign: Campaign; p
   const pausedOrDraft = campaign.state === "PAUSED" || campaign.state === "DRAFT";
   const busy = pending || (awaitingVersion !== undefined && campaign.version < awaitingVersion);
 
+  async function submitConsumption(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const amount = String(data.get("consumptionAmount"));
+    const key = retryKey ?? crypto.randomUUID();
+    setConsumptionPending(true);
+    setConsumption(undefined);
+    setConsumptionMessage(undefined);
+    const next = await consumeBudget(campaign.id, amount, budget.currency, key);
+    setConsumptionPending(false);
+    if (!next.ok) {
+      setConsumptionMessage(next.message);
+      setRetryKey(next.retryable ? key : undefined);
+      return;
+    }
+    setRetryKey(undefined);
+    setConsumption(next.consumption);
+    router.refresh();
+  }
+
   return (
     <div className="space-y-6">
       {result?.stale && <div role="alert" className="rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">This campaign changed elsewhere. Reload before submitting another command. <Button className="ml-3" onClick={() => router.refresh()}>Reload current campaign</Button></div>}
       {result && !result.ok && !result.stale && <p role="alert" className="rounded-md bg-red-50 p-4 text-sm text-red-800">{result.message}</p>}
 
-      <section className="grid gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200 sm:grid-cols-4">
+      <section className="grid gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200 sm:grid-cols-2 lg:grid-cols-6">
         <Stat label="State" value={campaign.state} />
         <Stat label="Version" value={String(campaign.version)} />
         <Stat label="Placement" value={campaign.placement_code} />
-        <Stat label="Configured budget" value={`${campaign.budget.configured_amount_minor} ${campaign.budget.currency} minor units`} />
+        <Stat label="Configured budget" value={`${budget.configured_amount_minor} ${budget.currency} minor units`} />
+        <Stat label="Committed spend" value={`${budget.committed_spend_minor} ${budget.currency} minor units`} />
+        <Stat label="Remaining budget" value={`${budget.remaining_amount_minor} ${budget.currency} minor units`} />
       </section>
 
       <div className="grid gap-5 lg:grid-cols-2">
@@ -54,8 +80,8 @@ export function CampaignDetail({ campaign, placements }: { campaign: Campaign; p
         </form>
 
         <form className="panel" onSubmit={form((data) => updateBudget(campaign.id, campaign.version, String(data.get("budget"))))}>
-          <h2 className="font-semibold">Lifetime configured budget</h2><input aria-label="Edit configured budget" name="budget" className="field" defaultValue={campaign.budget.configured_amount_minor} disabled={!mutable || busy} required />
-          <p className="text-xs text-slate-500">Currency is immutable: {campaign.budget.currency}. Active campaigns may only keep or increase this amount.</p>
+          <h2 className="font-semibold">Lifetime configured budget</h2><input aria-label="Edit configured budget" name="budget" className="field" defaultValue={budget.configured_amount_minor} disabled={!mutable || busy} required />
+          <p className="text-xs text-slate-500">Currency is immutable: {budget.currency}. Active campaigns may only keep or increase this amount; no budget may fall below committed spend.</p>
           <Button type="submit" disabled={!mutable || busy}>Save budget</Button>
         </form>
 
@@ -81,6 +107,20 @@ export function CampaignDetail({ campaign, placements }: { campaign: Campaign; p
           {campaign.state !== "ENDED" && <Button disabled={busy} className="bg-red-700 hover:bg-red-600" onClick={() => execute(() => transitionCampaign(campaign.id, campaign.version, "end"))}>End campaign</Button>}
           {campaign.state === "ENDED" && <p className="text-sm text-slate-600">This campaign is terminal and cannot be edited or reactivated.</p>}
         </div>
+      </section>
+
+      <section className="panel">
+        <p className="eyebrow">Phase 3 development control</p>
+        <h2 className="mt-1 font-semibold">Commit immediate spend</h2>
+        <p className="mt-2 text-sm text-slate-600">This command records spend immediately. It is not a reservation and does not assert that an ad was delivered.</p>
+        <form className="mt-4 flex flex-wrap items-end gap-3" onSubmit={submitConsumption}>
+          <label className="text-sm font-medium text-slate-800">Amount in minor units<input aria-label="Consumption amount" name="consumptionAmount" className="field min-w-56" disabled={consumptionPending} onChange={() => { if (retryKey) { setRetryKey(undefined); setConsumptionMessage(undefined); } }} required /></label>
+          <span className="pb-3 text-sm font-medium text-slate-600">{budget.currency}</span>
+          <Button type="submit" disabled={consumptionPending}>{consumptionPending ? "Committing…" : retryKey ? "Retry safely" : "Commit spend"}</Button>
+        </form>
+        {retryKey && <p role="alert" className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">The accounting outcome is uncertain. Retry safely to reuse the same financial idempotency key.</p>}
+        {consumptionMessage && !retryKey && <p role="alert" className="mt-3 rounded-md bg-red-50 p-3 text-sm text-red-800">{consumptionMessage}</p>}
+        {consumption && <div aria-live="polite" className="mt-4 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm"><p className="font-semibold">{consumption.outcome}</p><p className="mt-1 text-slate-600">Consumption {consumption.consumption_id}. Authoritative budget refresh requested.</p></div>}
       </section>
     </div>
   );

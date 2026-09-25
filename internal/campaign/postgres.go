@@ -16,7 +16,7 @@ type queryer interface {
 
 func getCampaign(ctx context.Context, database queryer, id string, forUpdate bool) (Campaign, error) {
 	query := `
-		SELECT id::text,advertiser_id::text,name,state,placement_code,budget_amount_minor,currency,version,created_at,updated_at
+		SELECT id::text,advertiser_id::text,name,state,placement_code,budget_amount_minor,committed_spend_minor,currency,version,created_at,updated_at
 		FROM campaigns WHERE id=$1`
 	if forUpdate {
 		query += ` FOR UPDATE`
@@ -39,7 +39,7 @@ func getCampaign(ctx context.Context, database queryer, id string, forUpdate boo
 func campaignDestinations(value *Campaign) []any {
 	return []any{
 		&value.ID, &value.AdvertiserID, &value.Name, &value.State, &value.PlacementCode,
-		&value.BudgetAmountMinor, &value.Currency, &value.Version, &value.CreatedAt, &value.UpdatedAt,
+		&value.BudgetAmountMinor, &value.CommittedSpendMinor, &value.Currency, &value.Version, &value.CreatedAt, &value.UpdatedAt,
 	}
 }
 
@@ -139,6 +139,9 @@ func (s *Store) UpdateBudget(ctx context.Context, id string, expectedVersion, am
 	return s.mutate(ctx, id, expectedVersion, func(ctx context.Context, tx pgx.Tx, value *Campaign) (bool, error) {
 		if value.State == Ended {
 			return false, &ConflictError{Code: "campaign_ended"}
+		}
+		if amount < value.CommittedSpendMinor {
+			return false, &ConflictError{Code: "configured_budget_below_committed_spend"}
 		}
 		if value.State == Active && amount < value.BudgetAmountMinor {
 			return false, &ConflictError{Code: "active_budget_cannot_decrease"}

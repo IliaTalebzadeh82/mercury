@@ -21,7 +21,7 @@ unit-test:
 integration-test:
 	@test -n "$$MERCURY_TEST_DATABASE_URL" || { echo "MERCURY_TEST_DATABASE_URL is required"; exit 1; }
 	@$(MAKE) integration-prepare
-	@GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go test -tags=integration -count=1 ./internal/advertiser ./internal/campaign ./internal/decision ./internal/api ./internal/platform/database ./internal/platform/server
+	@GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go test -tags=integration -count=1 ./internal/advertiser ./internal/campaign ./internal/budget ./internal/decision ./internal/api ./internal/platform/database ./internal/platform/server
 
 integration-prepare:
 	@test -n "$$MERCURY_TEST_DATABASE_URL" || { echo "MERCURY_TEST_DATABASE_URL is required"; exit 1; }
@@ -31,7 +31,7 @@ test-race:
 	@test -n "$$MERCURY_TEST_DATABASE_URL" || { echo "MERCURY_TEST_DATABASE_URL is required"; exit 1; }
 	@$(MAKE) integration-prepare
 	@GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go test -race -count=1 ./...
-	@GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go test -race -tags=integration -count=1 ./internal/advertiser ./internal/campaign ./internal/decision ./internal/api ./internal/platform/database ./internal/platform/server
+	@GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go test -race -tags=integration -count=1 ./internal/advertiser ./internal/campaign ./internal/budget ./internal/decision ./internal/api ./internal/platform/database ./internal/platform/server
 
 build:
 	GOCACHE=$(GO_CACHE) GOMODCACHE=$(GO_MOD_CACHE) go build -o bin/mercury ./cmd/mercury

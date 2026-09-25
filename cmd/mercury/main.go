@@ -13,6 +13,7 @@ import (
 
 	"github.com/IliaTalebzadeh82/mercury/internal/advertiser"
 	"github.com/IliaTalebzadeh82/mercury/internal/api"
+	"github.com/IliaTalebzadeh82/mercury/internal/budget"
 	"github.com/IliaTalebzadeh82/mercury/internal/campaign"
 	"github.com/IliaTalebzadeh82/mercury/internal/decision"
 	"github.com/IliaTalebzadeh82/mercury/internal/platform/config"
@@ -49,8 +50,9 @@ func run() error {
 
 	advertisers := advertiser.NewStore(pool, cfg.DatabaseOperationTimeout)
 	campaigns := campaign.NewStore(pool, cfg.DatabaseOperationTimeout)
+	budgets := budget.NewStore(pool, cfg.DatabaseOperationTimeout)
 	decisions := decision.NewEngine(pool, cfg.DatabaseOperationTimeout)
-	httpAPI := api.New(logger, advertisers, campaigns, decisions, cfg.DiagnosticAPIEnabled)
+	httpAPI := api.New(logger, advertisers, campaigns, budgets, decisions, cfg.DiagnosticAPIEnabled)
 	httpServer := server.New(cfg.DatabasePingTimeout, logger, pool, httpAPI)
 	listener, err := net.Listen("tcp", cfg.HTTPAddress)
 	if err != nil {

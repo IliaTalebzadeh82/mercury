@@ -1,4 +1,4 @@
-# Architecture through Phase 2
+# Architecture through Phase 3
 
 ## Runtime topology
 
@@ -39,6 +39,17 @@ bounded diagnostics. `internal/api` only adapts that behavior and conditionally
 mounts the diagnostic endpoint. The frontend Decision Lab reaches both through
 server actions; no backend URL or diagnostic configuration becomes browser
 configuration.
+
+`internal/budget` owns authoritative budget snapshots, immediate consumption,
+financial idempotency, and the PostgreSQL transaction that atomically updates
+committed spend and appends an immutable receipt. It uses the campaign row as
+the per-campaign serialization point shared with campaign lifecycle and budget
+configuration commands. It does not own campaign lifecycle or decision
+ranking.
+
+The browser reads accounting through the Next.js server boundary. One logical
+consumption attempt retains one idempotency key across an ambiguous 503. The UI
+never calculates or optimistically increments remaining budget.
 
 ## Startup
 
@@ -92,8 +103,9 @@ destructively initializes the normal `mercury` development database.
 
 ## Deliberately absent
 
-There are no serving-projection, spend, reservation, pacing, event,
+There are no serving-projection, reservation, pacing, event,
 measurement, attribution, analytics, cache,
-or messaging abstractions. Kafka, Redis, ClickHouse,
+or messaging abstractions. Phase 3 spend is immediate; it has no pending,
+release, expiration, or late-charge model. Kafka, Redis, ClickHouse,
 Kubernetes, Helm, Terraform, gRPC, GraphQL, ORMs, Redux, and ML remain outside
-the Phase 2 boundary.
+the Phase 3 boundary.

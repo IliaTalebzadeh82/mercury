@@ -23,7 +23,7 @@ test("developer exercises fill, no-fill, and explanation in Decision Lab", async
   await expect(page.getByText("XZ", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Explain decision" }).click();
   await expect(page.getByRole("heading", { name: "Diagnostic explanation" })).toBeVisible();
-  await expect(page.getByText("eligible", { exact: true })).toBeVisible();
+  await expect(page.getByText("eligible", { exact: true }).first()).toBeVisible();
 
   await page.getByLabel("Country").fill("XY");
   await page.getByRole("button", { name: "Request decision" }).click();

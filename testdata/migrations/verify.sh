@@ -34,14 +34,22 @@ assert_up() {
     [ "$seeds" = "home_feed,restaurant_list,search_results" ] || { echo "placement seeds mismatch" >&2; exit 1; }
 	index=$(psql_migration -tAc "SELECT to_regclass('public.campaign_target_countries_country_campaign_idx') IS NOT NULL")
 	[ "$index" = "t" ] || { echo "Phase 2 country lookup index is missing" >&2; exit 1; }
+	accounting_table=$(psql_migration -tAc "SELECT to_regclass('public.budget_consumption_commands') IS NOT NULL")
+	committed_column=$(psql_migration -tAc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='campaigns' AND column_name='committed_spend_minor'")
+	[ "$accounting_table" = "t" ] || { echo "Phase 3 consumption table is missing" >&2; exit 1; }
+	[ "$committed_column" = "1" ] || { echo "Phase 3 committed spend column is missing" >&2; exit 1; }
 }
 
-assert_phase_one_only() {
+assert_phase_two_only() {
 	tables=$(psql_migration -tAc \
 		"SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('advertisers','placements','campaigns','campaign_target_countries')")
-	index=$(psql_migration -tAc "SELECT to_regclass('public.campaign_target_countries_country_campaign_idx') IS NULL")
-	[ "$tables" = "4" ] || { echo "Phase 1 tables missing after Phase 2 down" >&2; exit 1; }
-	[ "$index" = "t" ] || { echo "Phase 2 country lookup index remains after down" >&2; exit 1; }
+	index=$(psql_migration -tAc "SELECT to_regclass('public.campaign_target_countries_country_campaign_idx') IS NOT NULL")
+	accounting_table=$(psql_migration -tAc "SELECT to_regclass('public.budget_consumption_commands') IS NULL")
+	committed_column=$(psql_migration -tAc "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='campaigns' AND column_name='committed_spend_minor'")
+	[ "$tables" = "4" ] || { echo "Phase 1 tables missing after Phase 3 down" >&2; exit 1; }
+	[ "$index" = "t" ] || { echo "Phase 2 index missing after Phase 3 down" >&2; exit 1; }
+	[ "$accounting_table" = "t" ] || { echo "Phase 3 table remains after down" >&2; exit 1; }
+	[ "$committed_column" = "0" ] || { echo "Phase 3 column remains after down" >&2; exit 1; }
 }
 
 assert_down() {
@@ -74,7 +82,7 @@ assert_up
 assert_country_invariant
 
 goose down
-assert_phase_one_only
+assert_phase_two_only
 goose up
 assert_up
 

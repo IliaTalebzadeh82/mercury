@@ -254,6 +254,39 @@ func TestLifecycleAndEditabilityRules(t *testing.T) {
 	}
 }
 
+func TestCommittedSpendFloorsBudgetWithoutChangingActivationSemantics(t *testing.T) {
+	pool, campaigns, advertiserID := integrationStores(t)
+	created := createCampaign(t, campaigns, advertiserID, unique("committed-floor"))
+	active, err := campaigns.Activate(context.Background(), created.ID, created.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE campaigns SET committed_spend_minor=budget_amount_minor WHERE id=$1`, active.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO budget_consumption_commands
+		(campaign_id,idempotency_key,request_fingerprint,amount_minor,currency,outcome,campaign_state_at_evaluation,
+		 configured_budget_minor,committed_spend_before_minor,resulting_committed_spend_minor,resulting_remaining_budget_minor)
+		VALUES ($1,$2,decode(repeat('61',32),'hex'),100,'EUR','APPROVED','ACTIVE',100,0,100,0)`, active.ID, unique("committed-floor-receipt")); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := campaigns.Pause(context.Background(), active.ID, active.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := campaigns.UpdateBudget(context.Background(), paused.ID, paused.Version, 99); err == nil {
+		t.Fatal("budget decreased below committed spend")
+	}
+	resumed, err := campaigns.Resume(context.Background(), paused.ID, paused.Version)
+	if err != nil {
+		t.Fatalf("zero-remaining campaign could not resume: %v", err)
+	}
+	if resumed.State != Active || resumed.Version != paused.Version+1 {
+		t.Fatalf("unexpected resumed campaign: %+v", resumed)
+	}
+}
+
 func integrationStores(t *testing.T) (*pgxpool.Pool, *Store, string) {
 	t.Helper()
 	url := os.Getenv("MERCURY_TEST_DATABASE_URL")

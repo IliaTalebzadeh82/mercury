@@ -47,17 +47,18 @@ type Placement struct {
 }
 
 type Campaign struct {
-	ID                string    `json:"id"`
-	AdvertiserID      string    `json:"advertiser_id"`
-	Name              string    `json:"name"`
-	State             State     `json:"state"`
-	PlacementCode     string    `json:"placement_code"`
-	BudgetAmountMinor int64     `json:"-"`
-	Currency          string    `json:"-"`
-	Countries         []string  `json:"-"`
-	Version           int64     `json:"version"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	ID                  string    `json:"id"`
+	AdvertiserID        string    `json:"advertiser_id"`
+	Name                string    `json:"name"`
+	State               State     `json:"state"`
+	PlacementCode       string    `json:"placement_code"`
+	BudgetAmountMinor   int64     `json:"-"`
+	CommittedSpendMinor int64     `json:"-"`
+	Currency            string    `json:"-"`
+	Countries           []string  `json:"-"`
+	Version             int64     `json:"version"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
 }
 
 type CreateCommand struct {
@@ -123,7 +124,7 @@ func (s *Store) Create(ctx context.Context, command CreateCommand) (CreateResult
 			(advertiser_id,name,placement_code,budget_amount_minor,currency,creation_idempotency_key,creation_request_fingerprint)
 		VALUES ($1,$2,$3,$4,$5,$6,$7)
 		ON CONFLICT (advertiser_id,creation_idempotency_key) DO NOTHING
-		RETURNING id::text,advertiser_id::text,name,state,placement_code,budget_amount_minor,currency,version,created_at,updated_at`,
+		RETURNING id::text,advertiser_id::text,name,state,placement_code,budget_amount_minor,committed_spend_minor,currency,version,created_at,updated_at`,
 		normalized.AdvertiserID, normalized.Name, normalized.PlacementCode, normalized.AmountMinor,
 		normalized.Currency, normalized.IdempotencyKey, fingerprint[:]).Scan(campaignDestinations(&value)...)
 	if err == nil {
@@ -144,7 +145,7 @@ func (s *Store) Create(ctx context.Context, command CreateCommand) (CreateResult
 
 	var storedFingerprint []byte
 	err = tx.QueryRow(ctx, `
-		SELECT id::text,advertiser_id::text,name,state,placement_code,budget_amount_minor,currency,version,created_at,updated_at,creation_request_fingerprint
+		SELECT id::text,advertiser_id::text,name,state,placement_code,budget_amount_minor,committed_spend_minor,currency,version,created_at,updated_at,creation_request_fingerprint
 		FROM campaigns WHERE advertiser_id=$1 AND creation_idempotency_key=$2`, normalized.AdvertiserID, normalized.IdempotencyKey).Scan(
 		append(campaignDestinations(&value), &storedFingerprint)...,
 	)
@@ -174,7 +175,7 @@ func (s *Store) List(ctx context.Context, advertiserID string, limit, offset int
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	rows, err := s.pool.Query(ctx, `
-		SELECT id::text,advertiser_id::text,name,state,placement_code,budget_amount_minor,currency,version,created_at,updated_at,
+		SELECT id::text,advertiser_id::text,name,state,placement_code,budget_amount_minor,committed_spend_minor,currency,version,created_at,updated_at,
 			ARRAY(SELECT country_code FROM campaign_target_countries t WHERE t.campaign_id=campaigns.id ORDER BY country_code)
 		FROM campaigns WHERE advertiser_id=$1
 		ORDER BY created_at DESC,id DESC LIMIT $2 OFFSET $3`, advertiserID, limit, offset)

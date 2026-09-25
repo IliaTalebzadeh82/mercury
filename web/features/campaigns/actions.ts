@@ -4,8 +4,8 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import type { ActionResult } from "@/lib/action-result";
 import { actionError } from "@/lib/api/action-result";
-import { mercuryFetch } from "@/lib/api/mercury";
-import type { Campaign } from "./api";
+import { MercuryAPIError, mercuryFetch } from "@/lib/api/mercury";
+import type { BudgetConsumption, Campaign } from "./api";
 
 type CreateInput = {
   advertiserId: string; name: string; placementCode: string; amountMinor: string;
@@ -38,3 +38,24 @@ export async function updateBudget(id: string, version: number, configuredAmount
 export async function updatePlacement(id: string, version: number, placementCode: string) { return mutate(id, version, "placement", "PUT", { placement_code: placementCode }); }
 export async function updateTargeting(id: string, version: number, countries: string[]) { return mutate(id, version, "targeting", "PUT", { countries }); }
 export async function transitionCampaign(id: string, version: number, transition: "activate" | "pause" | "resume" | "end") { return mutate(id, version, transition, "POST"); }
+
+export type ConsumptionActionResult =
+  | { ok: true; consumption: BudgetConsumption }
+  | { ok: false; message: string; fields: Record<string, string>; retryable: boolean };
+
+export async function consumeBudget(id: string, amountMinor: string, currency: string, idempotencyKey: string): Promise<ConsumptionActionResult> {
+  try {
+    const consumption = await mercuryFetch<BudgetConsumption>(`/campaigns/${encodeURIComponent(id)}/budget-consumptions`, {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({ amount_minor: amountMinor, currency }),
+    });
+    revalidatePath(`/campaigns/${id}`);
+    return { ok: true, consumption };
+  } catch (error) {
+    if (error instanceof MercuryAPIError) {
+      return { ok: false, message: error.message, fields: error.fields, retryable: error.status === 503 };
+    }
+    return { ok: false, message: "The budget consumption could not be completed", fields: {}, retryable: false };
+  }
+}

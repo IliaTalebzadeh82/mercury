@@ -54,6 +54,36 @@ func TestDecisionFillNoFillAndUnsupportedPlacement(t *testing.T) {
 	}
 }
 
+func TestDecisionRemainsBudgetUnawareForFullySpentActiveCampaign(t *testing.T) {
+	pool := integrationPool(t)
+	defer pool.Close()
+	suffix := time.Now().UnixNano() & 0xffffffffff
+	advertiserID := fmt.Sprintf("31500000-0000-4000-8000-%012x", suffix)
+	campaignID := fmt.Sprintf("31500000-0000-4001-8000-%012x", suffix)
+	seedCampaigns(t, pool, advertiserID, []seedCampaign{
+		{ID: campaignID, State: "ACTIVE", Placement: "home_feed", Countries: []string{"QW"}, Budget: 1},
+	})
+	if _, err := pool.Exec(context.Background(), `UPDATE campaigns SET committed_spend_minor=budget_amount_minor WHERE id=$1`, campaignID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO budget_consumption_commands
+		(campaign_id,idempotency_key,request_fingerprint,amount_minor,currency,outcome,campaign_state_at_evaluation,
+		 configured_budget_minor,committed_spend_before_minor,resulting_committed_spend_minor,resulting_remaining_budget_minor)
+		VALUES ($1,'decision-budget-unaware',decode(repeat('51',32),'hex'),1,'USD','APPROVED','ACTIVE',1,0,1,0)`, campaignID); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewEngine(pool, 5*time.Second).Decide(context.Background(), Opportunity{
+		ID: "31500000-0000-4000-8000-000000000101", Placement: "home_feed", Country: "QW",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != "FILL" || result.Selection == nil || result.Selection.CampaignID != campaignID {
+		t.Fatalf("fully spent active campaign became decision-ineligible: %+v", result)
+	}
+}
+
 func TestPostgreSQLAndGoRankingOrderAgree(t *testing.T) {
 	pool := integrationPool(t)
 	defer pool.Close()

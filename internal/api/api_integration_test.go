@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/IliaTalebzadeh82/mercury/internal/advertiser"
+	"github.com/IliaTalebzadeh82/mercury/internal/budget"
 	"github.com/IliaTalebzadeh82/mercury/internal/campaign"
 	"github.com/IliaTalebzadeh82/mercury/internal/decision"
 	"github.com/IliaTalebzadeh82/mercury/internal/platform/database"
@@ -209,7 +211,7 @@ func TestPhaseTwoDecisionAPIContracts(t *testing.T) {
 
 	disabled := apiRequest(t, application, http.MethodPost, "/ad-decisions/explain", body, nil)
 	assertStatus(t, disabled, http.StatusNotFound)
-	enabled := New(slog.New(slog.NewTextHandler(io.Discard, nil)), advertiser.NewStore(pool, 5*time.Second), campaign.NewStore(pool, 5*time.Second), decision.NewEngine(pool, 5*time.Second), true)
+	enabled := New(slog.New(slog.NewTextHandler(io.Discard, nil)), advertiser.NewStore(pool, 5*time.Second), campaign.NewStore(pool, 5*time.Second), budget.NewStore(pool, 5*time.Second), decision.NewEngine(pool, 5*time.Second), true)
 	explained := apiRequest(t, enabled, http.MethodPost, "/ad-decisions/explain", body, nil)
 	assertStatus(t, explained, http.StatusOK)
 	if !strings.Contains(explained.Body.String(), `"explanations"`) || !strings.Contains(explained.Body.String(), `"eligible":true`) {
@@ -220,7 +222,7 @@ func TestPhaseTwoDecisionAPIContracts(t *testing.T) {
 func TestDecisionAPITimeoutIsServiceUnavailable(t *testing.T) {
 	_, pool := integrationAPI(t)
 	defer pool.Close()
-	application := New(slog.New(slog.NewTextHandler(io.Discard, nil)), advertiser.NewStore(pool, time.Nanosecond), campaign.NewStore(pool, time.Nanosecond), decision.NewEngine(pool, time.Nanosecond), false)
+	application := New(slog.New(slog.NewTextHandler(io.Discard, nil)), advertiser.NewStore(pool, time.Nanosecond), campaign.NewStore(pool, time.Nanosecond), budget.NewStore(pool, time.Nanosecond), decision.NewEngine(pool, time.Nanosecond), false)
 	response := apiRequest(t, application, http.MethodPost, "/ad-decisions", map[string]any{
 		"opportunity_id": "41000000-0000-4000-8000-000000000104", "placement": "home_feed", "country": "US",
 	}, nil)
@@ -233,7 +235,7 @@ func TestSuccessfulDecisionLogIsStructuredAndBounded(t *testing.T) {
 	seedDecisionCampaign(t, pool)
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
-	application := New(logger, advertiser.NewStore(pool, 5*time.Second), campaign.NewStore(pool, 5*time.Second), decision.NewEngine(pool, 5*time.Second), false)
+	application := New(logger, advertiser.NewStore(pool, 5*time.Second), campaign.NewStore(pool, 5*time.Second), budget.NewStore(pool, 5*time.Second), decision.NewEngine(pool, 5*time.Second), false)
 	response := apiRequest(t, application, http.MethodPost, "/ad-decisions", map[string]any{
 		"opportunity_id": "41000000-0000-4000-8000-000000000105", "placement": "search_results", "country": "RZ",
 	}, nil)
@@ -259,6 +261,99 @@ func TestSuccessfulDecisionLogIsStructuredAndBounded(t *testing.T) {
 	if !found {
 		t.Fatalf("structured decision summary not found: %s", logs.String())
 	}
+}
+
+func TestPhaseThreeBudgetAPIContracts(t *testing.T) {
+	application, pool := integrationAPI(t)
+	defer pool.Close()
+	campaignID := seedBudgetCampaign(t, pool)
+
+	account := apiRequest(t, application, http.MethodGet, "/campaigns/"+campaignID+"/budget", nil, nil)
+	assertStatus(t, account, http.StatusOK)
+	if !strings.Contains(account.Body.String(), `"configured_amount_minor":"100"`) ||
+		!strings.Contains(account.Body.String(), `"committed_spend_minor":"0"`) ||
+		!strings.Contains(account.Body.String(), `"remaining_amount_minor":"100"`) {
+		t.Fatalf("unexpected budget response: %s", account.Body.String())
+	}
+
+	body := map[string]any{"amount_minor": "60", "currency": "eur"}
+	approved := apiRequest(t, application, http.MethodPost, "/campaigns/"+campaignID+"/budget-consumptions", body, map[string]string{"Idempotency-Key": "api-budget-approved"})
+	assertStatus(t, approved, http.StatusOK)
+	if !strings.Contains(approved.Body.String(), `"outcome":"APPROVED"`) || !strings.Contains(approved.Body.String(), `"remaining_amount_minor":"40"`) {
+		t.Fatalf("unexpected approval: %s", approved.Body.String())
+	}
+
+	replay := apiRequest(t, application, http.MethodPost, "/campaigns/"+campaignID+"/budget-consumptions", body, map[string]string{"Idempotency-Key": "api-budget-approved"})
+	assertStatus(t, replay, http.StatusOK)
+	if replay.Header().Get("Idempotency-Replayed") != "true" || replay.Body.String() != approved.Body.String() {
+		t.Fatalf("replay differs: header=%q body=%s", replay.Header().Get("Idempotency-Replayed"), replay.Body.String())
+	}
+
+	conflict := apiRequest(t, application, http.MethodPost, "/campaigns/"+campaignID+"/budget-consumptions", map[string]any{"amount_minor": "61", "currency": "EUR"}, map[string]string{"Idempotency-Key": "api-budget-approved"})
+	assertStatus(t, conflict, http.StatusConflict)
+	insufficient := apiRequest(t, application, http.MethodPost, "/campaigns/"+campaignID+"/budget-consumptions", map[string]any{"amount_minor": "41", "currency": "EUR"}, map[string]string{"Idempotency-Key": "api-budget-insufficient"})
+	assertStatus(t, insufficient, http.StatusOK)
+	if !strings.Contains(insufficient.Body.String(), `"outcome":"INSUFFICIENT_BUDGET"`) {
+		t.Fatalf("unexpected rejection: %s", insufficient.Body.String())
+	}
+	currency := apiRequest(t, application, http.MethodPost, "/campaigns/"+campaignID+"/budget-consumptions", map[string]any{"amount_minor": "1", "currency": "USD"}, map[string]string{"Idempotency-Key": "api-budget-currency"})
+	assertStatus(t, currency, http.StatusUnprocessableEntity)
+	missingKey := apiRequest(t, application, http.MethodPost, "/campaigns/"+campaignID+"/budget-consumptions", body, nil)
+	assertStatus(t, missingKey, http.StatusBadRequest)
+
+	var receipts int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM budget_consumption_commands WHERE campaign_id=$1`, campaignID).Scan(&receipts); err != nil {
+		t.Fatal(err)
+	}
+	if receipts != 2 {
+		t.Fatalf("receipts=%d, want approved and insufficient only", receipts)
+	}
+}
+
+func TestBudgetCompletionLogIsStructuredAndDoesNotLeakFinancialKeys(t *testing.T) {
+	_, pool := integrationAPI(t)
+	defer pool.Close()
+	campaignID := seedBudgetCampaign(t, pool)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	application := New(logger, advertiser.NewStore(pool, 5*time.Second), campaign.NewStore(pool, 5*time.Second), budget.NewStore(pool, 5*time.Second), decision.NewEngine(pool, 5*time.Second), false)
+	response := apiRequest(t, application, http.MethodPost, "/campaigns/"+campaignID+"/budget-consumptions", map[string]any{"amount_minor": "7", "currency": "EUR"}, map[string]string{"Idempotency-Key": "never-log-this-key"})
+	assertStatus(t, response, http.StatusOK)
+	if strings.Contains(logs.String(), "never-log-this-key") || strings.Contains(logs.String(), `"amount_minor"`) || strings.Contains(logs.String(), "postgres://") {
+		t.Fatalf("budget log leaked forbidden data: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), `"event":"budget_consumption_completed"`) || !strings.Contains(logs.String(), `"campaign_lock_wait_ms"`) {
+		t.Fatalf("completion log missing bounded fields: %s", logs.String())
+	}
+}
+
+func seedBudgetCampaign(t *testing.T, pool *pgxpool.Pool) string {
+	t.Helper()
+	sequence := time.Now().UnixNano()
+	advertiserKey := fmt.Sprintf("api-budget-advertiser-%d", sequence)
+	campaignKey := fmt.Sprintf("api-budget-campaign-%d", sequence)
+	var campaignID string
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	var advertiserID string
+	if err := tx.QueryRow(ctx, `INSERT INTO advertisers (name,creation_idempotency_key,creation_request_fingerprint) VALUES ('Budget API fixture',$1,decode(repeat('31',32),'hex')) RETURNING id::text`, advertiserKey).Scan(&advertiserID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.QueryRow(ctx, `INSERT INTO campaigns (advertiser_id,name,state,placement_code,budget_amount_minor,currency,creation_idempotency_key,creation_request_fingerprint) VALUES ($1,'Budget API campaign','ACTIVE','home_feed',100,'EUR',$2,decode(repeat('32',32),'hex')) RETURNING id::text`, advertiserID, campaignKey).Scan(&campaignID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO campaign_target_countries (campaign_id,country_code) VALUES ($1,'DE')`, campaignID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return campaignID
 }
 
 func seedDecisionCampaign(t *testing.T, pool *pgxpool.Pool) {
@@ -297,7 +392,7 @@ func integrationAPI(t *testing.T) (http.Handler, *pgxpool.Pool) {
 		t.Fatalf("database.Open(): %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(logger, advertiser.NewStore(pool, 5*time.Second), campaign.NewStore(pool, 5*time.Second), decision.NewEngine(pool, 5*time.Second), false), pool
+	return New(logger, advertiser.NewStore(pool, 5*time.Second), campaign.NewStore(pool, 5*time.Second), budget.NewStore(pool, 5*time.Second), decision.NewEngine(pool, 5*time.Second), false), pool
 }
 
 func apiRequest(t *testing.T, handler http.Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {

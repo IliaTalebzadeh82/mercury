@@ -9,8 +9,10 @@ The project is a modular monolith. Phase 1 supplies a transactional campaign
 control plane. Phase 2 adds a deliberately small direct-PostgreSQL decision
 engine with exact eligibility, deterministic rendezvous-style selection,
 transient evaluation identity, bounded optional diagnostics, and a developer
-Decision Lab. It intentionally contains no spend, reservation, pacing, event,
-attribution, analytics, or serving-projection model.
+Decision Lab. Phase 3 adds strictly serialized immediate budget consumption,
+an immutable accounting ledger, financial idempotency, and explicit
+counter/ledger verification. It intentionally contains no reservation, pacing,
+event, attribution, analytics, or serving-projection model.
 
 Mercury is inspired by publicly discussed engineering problems in large-scale
 advertising marketplaces. It is not associated with, and does not claim to
@@ -110,7 +112,7 @@ pnpm e2e
 
 `make migrate-test` resets the dedicated `mercury_migration_test` database,
 applies the production migrations, verifies placement seeds, deferred country
-cardinality, and the Phase 2 index, rolls Phase 2 down and up, rolls all
+cardinality, the Phase 2 index, and the Phase 3 accounting schema, rolls Phase 3 down and up, rolls all
 migrations down and verifies cleanup, reapplies, then resets the
 database. Integration tests recreate `mercury_integration_test`. Neither shares
 Goose metadata or destructive setup with the normal `mercury` database.
@@ -140,6 +142,26 @@ The reproducible load fixture, k6 workload, query-plan evidence, and measured
 development baseline are documented in
 [`docs/performance/phase2-baseline.md`](docs/performance/phase2-baseline.md).
 
+## Budget accounting API
+
+`GET /v1/campaigns/{campaign_id}/budget` returns configured budget, committed
+spend, and derived remaining budget from one authoritative PostgreSQL row
+snapshot.
+
+`POST /v1/campaigns/{campaign_id}/budget-consumptions` requires an
+`Idempotency-Key` and a positive decimal-string `amount_minor` plus currency.
+It returns `APPROVED`, `INSUFFICIENT_BUDGET`, or `CAMPAIGN_NOT_ACTIVE` as an
+HTTP 200 business result. A 503 is infrastructure uncertainty; callers must
+retry the same semantic command with the same key.
+
+Immediate consumption does not assert delivery and is not a reservation.
+`ACTIVE` does not guarantee that remaining budget is positive. Phase 2 remains
+budget-unaware by design.
+
+The reproducible Phase 3 contention matrix and measured development baseline
+are documented in
+[`docs/performance/phase3-baseline.md`](docs/performance/phase3-baseline.md).
+
 ## Architecture records
 
 - [ADR 001: Begin as a modular monolith](adr/001-modular-monolith.md)
@@ -148,6 +170,9 @@ development baseline are documented in
 - [ADR 004: Typed relational country targeting](adr/004-typed-relational-country-targeting.md)
 - [ADR 005: Direct PostgreSQL decision consistency and read path](adr/005-direct-postgresql-decision-read-path.md)
 - [ADR 006: Opportunity and decision identity](adr/006-opportunity-and-decision-identity.md)
+- [ADR 007: Immediate consumption boundary and accounting representation](adr/007-immediate-consumption-and-accounting-representation.md)
+- [ADR 008: PostgreSQL budget serialization](adr/008-postgresql-budget-serialization.md)
+- [ADR 009: Financial idempotency](adr/009-financial-idempotency.md)
 
 The current topology and operational contracts are described in
 [docs/architecture.md](docs/architecture.md).

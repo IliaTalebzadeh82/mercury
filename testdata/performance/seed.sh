@@ -19,9 +19,17 @@ go run -tags="$GOOSE_TAGS" "github.com/pressly/goose/v3/cmd/goose@$GOOSE_VERSION
 
 docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U mercury -d "$performance_database" \
     -f /dev/stdin < testdata/performance/seed.sql
+docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U mercury -d "$performance_database" \
+    -f /dev/stdin < testdata/performance/budget_seed.sql
 
 counts=$(docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -tAc \
     "WITH cohorts(country_code) AS (VALUES ('XA'),('XB'),('XC'),('XD'),('XE')), actual AS (SELECT t.country_code,count(*) FILTER (WHERE c.state='ACTIVE' AND c.placement_code='search_results') AS eligible FROM campaign_target_countries t JOIN campaigns c ON c.id=t.campaign_id GROUP BY t.country_code) SELECT string_agg(cohorts.country_code || ':' || COALESCE(actual.eligible,0),',' ORDER BY cohorts.country_code) FROM cohorts LEFT JOIN actual USING (country_code)" \
     -U mercury -d "$performance_database")
 [ "$counts" = "XA:0,XB:1,XC:10,XD:100,XE:1000" ] || { echo "unexpected performance cohort counts: $counts" >&2; exit 1; }
 echo "$counts"
+
+budget_campaigns=$(docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -tAc \
+    "SELECT count(*) FROM campaigns WHERE advertiser_id='91000000-0000-4000-8000-000000000000'" \
+    -U mercury -d "$performance_database")
+[ "$budget_campaigns" = "103" ] || { echo "unexpected Phase 3 campaign count: $budget_campaigns" >&2; exit 1; }
+echo "phase3_budget_campaigns:$budget_campaigns"
