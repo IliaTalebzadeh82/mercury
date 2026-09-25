@@ -24,6 +24,7 @@ type Config struct {
 	DatabaseOperationTimeout time.Duration
 	ShutdownTimeout          time.Duration
 	LogLevel                 slog.Level
+	DiagnosticAPIEnabled     bool
 }
 
 func Load() (Config, error) {
@@ -49,6 +50,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	diagnosticAPIEnabled, err := boolean("MERCURY_DIAGNOSTIC_API_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
 
 	return Config{
 		HTTPAddress:              httpAddress,
@@ -57,7 +62,23 @@ func Load() (Config, error) {
 		DatabaseOperationTimeout: databaseOperationTimeout,
 		ShutdownTimeout:          shutdownTimeout,
 		LogLevel:                 logLevel,
+		DiagnosticAPIEnabled:     diagnosticAPIEnabled,
 	}, nil
+}
+
+func boolean(name string, fallback bool) (bool, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback, nil
+	}
+	switch strings.ToLower(raw) {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("%s must be true or false", name)
+	}
 }
 
 func valueOrDefault(name, fallback string) string {

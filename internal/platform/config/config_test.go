@@ -25,7 +25,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() unexpected error: %v", err)
 	}
-	if cfg.HTTPAddress != ":8080" || cfg.DatabasePingTimeout != 2*time.Second || cfg.DatabaseOperationTimeout != 3*time.Second || cfg.ShutdownTimeout != 10*time.Second || cfg.LogLevel != slog.LevelInfo {
+	if cfg.HTTPAddress != ":8080" || cfg.DatabasePingTimeout != 2*time.Second || cfg.DatabaseOperationTimeout != 3*time.Second || cfg.ShutdownTimeout != 10*time.Second || cfg.LogLevel != slog.LevelInfo || cfg.DiagnosticAPIEnabled {
 		t.Fatalf("Load() did not return the expected non-secret defaults")
 	}
 }
@@ -42,6 +42,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "operation timeout too short", key: "MERCURY_DATABASE_OPERATION_TIMEOUT", value: "10ms"},
 		{name: "malformed shutdown timeout", key: "MERCURY_SHUTDOWN_TIMEOUT", value: "later"},
 		{name: "unknown log level", key: "MERCURY_LOG_LEVEL", value: "verbose"},
+		{name: "invalid diagnostic API flag", key: "MERCURY_DIAGNOSTIC_API_ENABLED", value: "sometimes"},
 	}
 
 	for _, tt := range tests {
@@ -66,6 +67,7 @@ func cleanMercuryEnvironment(t *testing.T) {
 		"MERCURY_DATABASE_OPERATION_TIMEOUT",
 		"MERCURY_SHUTDOWN_TIMEOUT",
 		"MERCURY_LOG_LEVEL",
+		"MERCURY_DIAGNOSTIC_API_ENABLED",
 	} {
 		t.Setenv(name, "")
 	}

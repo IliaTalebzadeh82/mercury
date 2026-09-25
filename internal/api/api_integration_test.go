@@ -19,6 +19,7 @@ import (
 
 	"github.com/IliaTalebzadeh82/mercury/internal/advertiser"
 	"github.com/IliaTalebzadeh82/mercury/internal/campaign"
+	"github.com/IliaTalebzadeh82/mercury/internal/decision"
 	"github.com/IliaTalebzadeh82/mercury/internal/platform/database"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -141,6 +142,146 @@ func TestAPIReturnsSafeDatabaseFailure(t *testing.T) {
 	if strings.Contains(response.Body.String(), "postgres://") || strings.Contains(response.Body.String(), "campaigns_") {
 		t.Fatalf("unsafe database detail in response: %s", response.Body.String())
 	}
+	decisionResponse := apiRequest(t, application, http.MethodPost, "/ad-decisions", map[string]any{
+		"opportunity_id": "41000000-0000-4000-8000-000000000001", "placement": "home_feed", "country": "US",
+	}, nil)
+	assertStatus(t, decisionResponse, http.StatusServiceUnavailable)
+	if strings.Contains(decisionResponse.Body.String(), "postgres://") || strings.Contains(decisionResponse.Body.String(), "campaign") {
+		t.Fatalf("unsafe database detail in decision response: %s", decisionResponse.Body.String())
+	}
+}
+
+func TestPhaseTwoDecisionAPIContracts(t *testing.T) {
+	application, pool := integrationAPI(t)
+	defer pool.Close()
+	seedDecisionCampaign(t, pool)
+	body := map[string]any{
+		"opportunity_id": "41000000-0000-4000-8000-000000000101", "placement": " SEARCH_RESULTS ", "country": " rz ",
+	}
+	first := apiRequest(t, application, http.MethodPost, "/ad-decisions", body, nil)
+	assertStatus(t, first, http.StatusOK)
+	var firstDecision decision.Decision
+	decodeResponse(t, first, &firstDecision)
+	if firstDecision.Outcome != "FILL" || firstDecision.Selection == nil || firstDecision.Placement != "search_results" || firstDecision.Country != "RZ" {
+		t.Fatalf("unexpected fill: %+v", firstDecision)
+	}
+	if strings.Contains(first.Body.String(), "eligible_candidate_count") || strings.Contains(first.Body.String(), "ranking") {
+		t.Fatalf("normal response leaks diagnostics: %s", first.Body.String())
+	}
+	second := apiRequest(t, application, http.MethodPost, "/ad-decisions", body, nil)
+	assertStatus(t, second, http.StatusOK)
+	var secondDecision decision.Decision
+	decodeResponse(t, second, &secondDecision)
+	if secondDecision.Selection.CampaignID != firstDecision.Selection.CampaignID || secondDecision.DecisionID == firstDecision.DecisionID {
+		t.Fatalf("retry identity contract violated: %+v %+v", firstDecision, secondDecision)
+	}
+
+	noFill := apiRequest(t, application, http.MethodPost, "/ad-decisions", map[string]any{
+		"opportunity_id": "41000000-0000-4000-8000-000000000102", "placement": "search_results", "country": "RY",
+	}, nil)
+	assertStatus(t, noFill, http.StatusOK)
+	var noFillDecision decision.Decision
+	decodeResponse(t, noFill, &noFillDecision)
+	if noFillDecision.Outcome != "NO_FILL" || noFillDecision.Selection != nil || noFillDecision.DecisionID == "" {
+		t.Fatalf("unexpected no-fill: %+v", noFillDecision)
+	}
+
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"malformed", `{"opportunity_id":`, http.StatusBadRequest},
+		{"multiple", `{"opportunity_id":"41000000-0000-4000-8000-000000000101","placement":"home_feed","country":"US"}{}`, http.StatusBadRequest},
+		{"unknown field", `{"opportunity_id":"41000000-0000-4000-8000-000000000101","placement":"home_feed","country":"US","user_id":"forbidden"}`, http.StatusBadRequest},
+		{"uppercase UUID", `{"opportunity_id":"41000000-0000-4000-8000-00000000010A","placement":"home_feed","country":"US"}`, http.StatusUnprocessableEntity},
+		{"nil UUID", `{"opportunity_id":"00000000-0000-0000-0000-000000000000","placement":"home_feed","country":"US"}`, http.StatusUnprocessableEntity},
+		{"unknown placement", `{"opportunity_id":"41000000-0000-4000-8000-000000000103","placement":"not_real","country":"US"}`, http.StatusUnprocessableEntity},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/ad-decisions", strings.NewReader(test.body))
+			response := httptest.NewRecorder()
+			application.ServeHTTP(response, request)
+			assertStatus(t, response, test.want)
+		})
+	}
+
+	disabled := apiRequest(t, application, http.MethodPost, "/ad-decisions/explain", body, nil)
+	assertStatus(t, disabled, http.StatusNotFound)
+	enabled := New(slog.New(slog.NewTextHandler(io.Discard, nil)), advertiser.NewStore(pool, 5*time.Second), campaign.NewStore(pool, 5*time.Second), decision.NewEngine(pool, 5*time.Second), true)
+	explained := apiRequest(t, enabled, http.MethodPost, "/ad-decisions/explain", body, nil)
+	assertStatus(t, explained, http.StatusOK)
+	if !strings.Contains(explained.Body.String(), `"explanations"`) || !strings.Contains(explained.Body.String(), `"eligible":true`) {
+		t.Fatalf("diagnostic response missing explanation: %s", explained.Body.String())
+	}
+}
+
+func TestDecisionAPITimeoutIsServiceUnavailable(t *testing.T) {
+	_, pool := integrationAPI(t)
+	defer pool.Close()
+	application := New(slog.New(slog.NewTextHandler(io.Discard, nil)), advertiser.NewStore(pool, time.Nanosecond), campaign.NewStore(pool, time.Nanosecond), decision.NewEngine(pool, time.Nanosecond), false)
+	response := apiRequest(t, application, http.MethodPost, "/ad-decisions", map[string]any{
+		"opportunity_id": "41000000-0000-4000-8000-000000000104", "placement": "home_feed", "country": "US",
+	}, nil)
+	assertStatus(t, response, http.StatusServiceUnavailable)
+}
+
+func TestSuccessfulDecisionLogIsStructuredAndBounded(t *testing.T) {
+	_, pool := integrationAPI(t)
+	defer pool.Close()
+	seedDecisionCampaign(t, pool)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	application := New(logger, advertiser.NewStore(pool, 5*time.Second), campaign.NewStore(pool, 5*time.Second), decision.NewEngine(pool, 5*time.Second), false)
+	response := apiRequest(t, application, http.MethodPost, "/ad-decisions", map[string]any{
+		"opportunity_id": "41000000-0000-4000-8000-000000000105", "placement": "search_results", "country": "RZ",
+	}, nil)
+	assertStatus(t, response, http.StatusOK)
+	if strings.Contains(logs.String(), "campaign_id") || strings.Contains(logs.String(), "ranking") || strings.Contains(logs.String(), "budget") || strings.Contains(logs.String(), "postgres://") {
+		t.Fatalf("decision log contains forbidden data: %s", logs.String())
+	}
+	var found bool
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("log is not structured JSON: %v: %s", err, line)
+		}
+		if entry["event"] == "ad_decision_completed" {
+			found = true
+			for _, key := range []string{"request_id", "opportunity_id", "decision_id", "outcome", "placement", "country", "eligible_candidate_count", "query_duration_ms", "decision_duration_ms"} {
+				if _, exists := entry[key]; !exists {
+					t.Fatalf("decision log missing %s: %v", key, entry)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("structured decision summary not found: %s", logs.String())
+	}
+}
+
+func seedDecisionCampaign(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `INSERT INTO advertisers (id,name,creation_idempotency_key,creation_request_fingerprint) VALUES ('41000000-0000-4000-8000-000000000001','API decision fixture','api-decision-fixture',decode(repeat('01',32),'hex')) ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO campaigns (id,advertiser_id,name,state,placement_code,budget_amount_minor,currency,creation_idempotency_key,creation_request_fingerprint) VALUES ('41000000-0000-4000-8000-000000000011','41000000-0000-4000-8000-000000000001','API decision fixture','ACTIVE','search_results',1,'USD','api-decision-campaign',decode(repeat('02',32),'hex')) ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO campaign_target_countries (campaign_id,country_code) VALUES ('41000000-0000-4000-8000-000000000011','RZ') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func integrationAPI(t *testing.T) (http.Handler, *pgxpool.Pool) {
@@ -156,7 +297,7 @@ func integrationAPI(t *testing.T) (http.Handler, *pgxpool.Pool) {
 		t.Fatalf("database.Open(): %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(logger, advertiser.NewStore(pool, 5*time.Second), campaign.NewStore(pool, 5*time.Second)), pool
+	return New(logger, advertiser.NewStore(pool, 5*time.Second), campaign.NewStore(pool, 5*time.Second), decision.NewEngine(pool, 5*time.Second), false), pool
 }
 
 func apiRequest(t *testing.T, handler http.Handler, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {

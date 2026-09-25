@@ -17,6 +17,7 @@ export function ApplicationShell({ children }: { children: ReactNode }) {
           <nav className="ml-auto flex gap-4 text-sm font-medium text-slate-600" aria-label="Primary">
             <Link href="/">Platform health</Link>
             <Link href="/advertisers">Advertisers</Link>
+            <Link href="/ad-decisions">Decision Lab</Link>
           </nav>
         </div>
       </header>

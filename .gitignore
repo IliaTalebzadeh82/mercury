@@ -10,4 +10,5 @@ web/node_modules/
 web/coverage/
 web/playwright-report/
 web/test-results/
+loadtests/results/
 *.log

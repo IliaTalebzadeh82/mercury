@@ -1,4 +1,4 @@
-# Architecture through Phase 1
+# Architecture through Phase 2
 
 ## Runtime topology
 
@@ -18,8 +18,9 @@ composition root. Code under `internal/platform` owns only configuration,
 database connectivity, and HTTP lifecycle concerns. Domain packages will be
 introduced only when their behavior exists.
 
-PostgreSQL is the sole datastore. Phase 1 adds advertiser and campaign
-transactional state without creating a separate service or datastore.
+PostgreSQL is the sole datastore. Phase 2 reads advertiser and campaign
+transactional state directly for decisions without creating a separate service,
+projection, cache, or datastore.
 
 ## Campaign control plane
 
@@ -32,6 +33,13 @@ does not import either domain package.
 The browser continues to use the Next.js server boundary. Backend topology and
 `MERCURY_API_URL` are not exposed through public client configuration.
 
+`internal/decision` owns opportunity normalization, deterministic ranking, the
+single-statement production decision query, transient decision identity, and
+bounded diagnostics. `internal/api` only adapts that behavior and conditionally
+mounts the diagnostic endpoint. The frontend Decision Lab reaches both through
+server actions; no backend URL or diagnostic configuration becomes browser
+configuration.
+
 ## Startup
 
 The process parses and validates configuration before opening its listener. It
@@ -39,7 +47,7 @@ constructs a `pgxpool` and performs a bounded PostgreSQL ping. Missing required
 configuration, malformed configuration, or failed initial connectivity causes
 startup to fail with a non-zero exit status.
 
-The Phase 0 pool is explicitly capped at four connections. This conservative
+The PostgreSQL pool remains explicitly capped at four connections. This conservative
 limit prevents CPU-derived defaults from creating an unexpectedly large
 database connection budget. Capacity will be revisited when real transactional
 workloads exist.
@@ -84,7 +92,8 @@ destructively initializes the normal `mercury` development database.
 
 ## Deliberately absent
 
-There are no serving, spend, reservation, pacing, event, measurement,
-attribution, analytics, cache, or messaging abstractions. Kafka, Redis, ClickHouse,
+There are no serving-projection, spend, reservation, pacing, event,
+measurement, attribution, analytics, cache,
+or messaging abstractions. Kafka, Redis, ClickHouse,
 Kubernetes, Helm, Terraform, gRPC, GraphQL, ORMs, Redux, and ML remain outside
-the Phase 1 boundary.
+the Phase 2 boundary.

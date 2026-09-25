@@ -32,6 +32,16 @@ assert_up() {
         "SELECT string_agg(code, ',' ORDER BY code) FROM placements")
     [ "$tables" = "4" ] || { echo "expected four Phase 1 tables" >&2; exit 1; }
     [ "$seeds" = "home_feed,restaurant_list,search_results" ] || { echo "placement seeds mismatch" >&2; exit 1; }
+	index=$(psql_migration -tAc "SELECT to_regclass('public.campaign_target_countries_country_campaign_idx') IS NOT NULL")
+	[ "$index" = "t" ] || { echo "Phase 2 country lookup index is missing" >&2; exit 1; }
+}
+
+assert_phase_one_only() {
+	tables=$(psql_migration -tAc \
+		"SELECT count(*) FROM pg_tables WHERE schemaname='public' AND tablename IN ('advertisers','placements','campaigns','campaign_target_countries')")
+	index=$(psql_migration -tAc "SELECT to_regclass('public.campaign_target_countries_country_campaign_idx') IS NULL")
+	[ "$tables" = "4" ] || { echo "Phase 1 tables missing after Phase 2 down" >&2; exit 1; }
+	[ "$index" = "t" ] || { echo "Phase 2 country lookup index remains after down" >&2; exit 1; }
 }
 
 assert_down() {
@@ -62,6 +72,11 @@ reset_database
 goose up
 assert_up
 assert_country_invariant
+
+goose down
+assert_phase_one_only
+goose up
+assert_up
 
 goose down-to 0
 assert_down

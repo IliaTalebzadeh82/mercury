@@ -16,6 +16,7 @@ import (
 
 	"github.com/IliaTalebzadeh82/mercury/internal/advertiser"
 	"github.com/IliaTalebzadeh82/mercury/internal/campaign"
+	"github.com/IliaTalebzadeh82/mercury/internal/decision"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -30,10 +31,11 @@ type API struct {
 	logger      *slog.Logger
 	advertisers *advertiser.Store
 	campaigns   *campaign.Store
+	decisions   *decision.Engine
 }
 
-func New(logger *slog.Logger, advertisers *advertiser.Store, campaigns *campaign.Store) http.Handler {
-	api := &API{logger: logger, advertisers: advertisers, campaigns: campaigns}
+func New(logger *slog.Logger, advertisers *advertiser.Store, campaigns *campaign.Store, decisions *decision.Engine, diagnosticsEnabled bool) http.Handler {
+	api := &API{logger: logger, advertisers: advertisers, campaigns: campaigns, decisions: decisions}
 	router := chi.NewRouter()
 	router.Use(api.requestLog)
 	router.NotFound(func(writer http.ResponseWriter, request *http.Request) {
@@ -57,6 +59,10 @@ func New(logger *slog.Logger, advertisers *advertiser.Store, campaigns *campaign
 	router.Post("/campaigns/{campaignID}/pause", api.pause)
 	router.Post("/campaigns/{campaignID}/resume", api.resume)
 	router.Post("/campaigns/{campaignID}/end", api.end)
+	router.Post("/ad-decisions", api.createDecision)
+	if diagnosticsEnabled {
+		router.Post("/ad-decisions/explain", api.explainDecision)
+	}
 	return router
 }
 

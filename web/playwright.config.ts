@@ -21,7 +21,7 @@ export default defineConfig({
     {
       command: "go run ./cmd/mercury",
       cwd: "..",
-      env: { ...process.env, MERCURY_DATABASE_URL: databaseURL, MERCURY_HTTP_ADDRESS: "127.0.0.1:18080" },
+      env: { ...process.env, MERCURY_DATABASE_URL: databaseURL, MERCURY_HTTP_ADDRESS: "127.0.0.1:18080", MERCURY_DIAGNOSTIC_API_ENABLED: "true" },
       url: "http://127.0.0.1:18080/readyz",
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,

@@ -5,11 +5,12 @@ low-latency serving systems make economically correct decisions under
 concurrent budgets, asynchronous state, high-volume event streams, and partial
 failure.
 
-The project is a modular monolith. Phase 1 adds a transactional campaign control
-plane for advertisers, platform placements, configured lifetime budgets,
-country targeting, lifecycle commands, idempotent creation, and optimistic
-operator concurrency. It intentionally contains no serving, spend, reservation,
-pacing, event, attribution, or analytics model.
+The project is a modular monolith. Phase 1 supplies a transactional campaign
+control plane. Phase 2 adds a deliberately small direct-PostgreSQL decision
+engine with exact eligibility, deterministic rendezvous-style selection,
+transient evaluation identity, bounded optional diagnostics, and a developer
+Decision Lab. It intentionally contains no spend, reservation, pacing, event,
+attribution, analytics, or serving-projection model.
 
 Mercury is inspired by publicly discussed engineering problems in large-scale
 advertising marketplaces. It is not associated with, and does not claim to
@@ -73,8 +74,10 @@ misconfigured state.
 | `MERCURY_DATABASE_OPERATION_TIMEOUT` | no | `3s` | Normal application database-operation deadline |
 | `MERCURY_SHUTDOWN_TIMEOUT` | no | `10s` | Graceful HTTP shutdown deadline |
 | `MERCURY_LOG_LEVEL` | no | `info` | `slog` level |
+| `MERCURY_DIAGNOSTIC_API_ENABLED` | no | `false` | Mount the bounded read-only decision explanation endpoint |
 | `MERCURY_TEST_DATABASE_URL` | integration tests | none | Real PostgreSQL used by backend tests |
 | `MERCURY_MIGRATION_TEST_DATABASE_URL` | migration verification | none | Dedicated disposable Goose verification database |
+| `MERCURY_PERFORMANCE_DATABASE_URL` | performance fixture | none | Dedicated disposable Phase 2 baseline database |
 | `MERCURY_API_URL` | frontend server | `http://localhost:8080` | Backend base URL |
 
 See `.env.example` for local values. Never commit real credentials.
@@ -106,8 +109,9 @@ pnpm e2e
 ```
 
 `make migrate-test` resets the dedicated `mercury_migration_test` database,
-applies the production migration, verifies placement seeds and deferred country
-cardinality, rolls back and verifies cleanup, reapplies, then resets the
+applies the production migrations, verifies placement seeds, deferred country
+cardinality, and the Phase 2 index, rolls Phase 2 down and up, rolls all
+migrations down and verifies cleanup, reapplies, then resets the
 database. Integration tests recreate `mercury_integration_test`. Neither shares
 Goose metadata or destructive setup with the normal `mercury` database.
 
@@ -119,12 +123,31 @@ and stale preconditions return 428, 400, and 412 respectively. See
 [`docs/domain-model.md`](docs/domain-model.md) and
 [`docs/invariants.md`](docs/invariants.md) for the exact semantics.
 
+## Decision API
+
+`POST /v1/ad-decisions` accepts strict JSON containing `opportunity_id`,
+`placement`, and `country`. Fill and no-fill both return HTTP 200. The normal
+response exposes only normalized opportunity fields, outcome, transient
+decision ID, and the selected campaign ID/version when filled.
+
+`POST /v1/ad-decisions/explain` is not mounted unless
+`MERCURY_DIAGNOSTIC_API_ENABLED=true`. It returns at most 200 campaign
+explanations and is developer diagnostics, not an authentication boundary.
+See [`docs/domain-model.md`](docs/domain-model.md) for ranking and identity
+semantics.
+
+The reproducible load fixture, k6 workload, query-plan evidence, and measured
+development baseline are documented in
+[`docs/performance/phase2-baseline.md`](docs/performance/phase2-baseline.md).
+
 ## Architecture records
 
 - [ADR 001: Begin as a modular monolith](adr/001-modular-monolith.md)
 - [ADR 002: PostgreSQL is the transactional source of truth](adr/002-postgresql-source-of-truth.md)
 - [ADR 003: Control-plane concurrency and retry semantics](adr/003-control-plane-concurrency-and-retries.md)
 - [ADR 004: Typed relational country targeting](adr/004-typed-relational-country-targeting.md)
+- [ADR 005: Direct PostgreSQL decision consistency and read path](adr/005-direct-postgresql-decision-read-path.md)
+- [ADR 006: Opportunity and decision identity](adr/006-opportunity-and-decision-identity.md)
 
 The current topology and operational contracts are described in
 [docs/architecture.md](docs/architecture.md).

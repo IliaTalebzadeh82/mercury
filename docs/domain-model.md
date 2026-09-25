@@ -1,4 +1,4 @@
-# Phase 1 campaign control-plane domain
+# Domain model through Phase 2
 
 ## Advertiser
 
@@ -41,3 +41,29 @@ increase, never decrease. Placement and targeting can change only while draft
 or paused. Currency never changes.
 
 There is no scheduling, exhaustion, deletion, or archival in Phase 1.
+
+## Ad opportunity and decision
+
+An ad opportunity is the transient tuple of caller-supplied canonical UUID,
+placement, and two-letter country code. It contains no user, device, search,
+creative, bid, or personalization data and is never persisted.
+
+A campaign is eligible exactly when it is `ACTIVE`, its placement matches, and
+its country targets contain the normalized opportunity country. Configured
+budget is intentionally irrelevant because Phase 2 has no spend or available
+budget state.
+
+Eligible campaigns use deterministic rendezvous-style ranking. For every
+campaign, Mercury calculates the full MD5 byte sequence of:
+
+```text
+canonical opportunity UUID + ":" + canonical campaign UUID
+```
+
+The highest digest wins; equal digests use campaign UUID ascending. MD5 exists
+only for identical PostgreSQL/Go non-security ordering and must never be reused
+for passwords, tokens, signatures, or any security purpose.
+
+The same opportunity and committed candidate set therefore produce the same
+winner. Each successful evaluation—including no-fill—receives a fresh transient
+random UUIDv4 `decision_id`. Neither opportunity nor decision is stored.
