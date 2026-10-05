@@ -18,6 +18,21 @@ Mercury is inspired by publicly discussed engineering problems in large-scale
 advertising marketplaces. It is not associated with, and does not claim to
 reproduce, Delivery Hero or any other company's proprietary architecture.
 
+## Project direction and working context
+
+The completed Phase 0–3 implementation is Mercury's correctness baseline. Once
+authorized, the next phase will measure that baseline before introducing
+architectural complexity. See the [Roadmap V2](docs/roadmap.md),
+[portfolio boundary](docs/portfolio-boundary.md), and
+[company-evidence policy](docs/company-evidence.md).
+
+Repository-guided development starts with [AGENTS.md](AGENTS.md), the
+[latest handoff](docs/handoffs/latest.md), and the current phase specification.
+The [context map](docs/context-map.md) and
+[context lifecycle](docs/context-lifecycle.md) keep future sessions narrow and
+resumable. The original one-file project prompt is preserved only as
+[historical audit material](docs/archive/masterprompt-original.md).
+
 ## Prerequisites
 
 - Go 1.23.5

@@ -82,6 +82,21 @@ Phase 0 has no useful backend behavior without PostgreSQL, so readiness fails
 closed. A future serving data plane may require a different degradation policy;
 that decision belongs to the phase that introduces projected serving state.
 
+### Future replicated-workload semantics
+
+Liveness answers: **is this process alive and functioning?** External dependency
+failure must not automatically mark a functioning process dead and trigger a
+restart loop.
+
+Readiness answers: **is this particular instance currently safe to receive its
+intended workload?** Future serving readiness may depend on projection bootstrap
+completion, freshness within an explicit bound, required local indexes, required
+ownership where applicable, and not being in drain state. A process can be alive
+while unready. Process existence must never be conflated with safe serving.
+
+Every serving replica must establish readiness from its own reconstructable state
+and durable inputs; it cannot depend on a particular sibling remaining alive.
+
 ## Shutdown
 
 SIGINT or SIGTERM causes the server shutdown path to withdraw readiness and
@@ -93,6 +108,29 @@ Phase 0 does not implement a load-balancer drain interval. Readiness withdrawal
 records the application lifecycle state, but the listener begins closing
 immediately. Externally observable drain behavior will be designed only when an
 actual orchestrator or load balancer exists.
+
+Future horizontally replicated workloads generally withdraw readiness, stop new
+routing, boundedly finish or terminate in-flight work according to their
+contract, release background ownership, close resources, and exit within their
+termination deadline. The precise loss/duplication guarantee belongs to each
+workflow and must be proved rather than assumed.
+
+## Future state and replication conventions
+
+Meaningful runtime state is classified by restart and replication semantics:
+
+| Class | Meaning | Example |
+| --- | --- | --- |
+| `AUTHORITATIVE_SHARED` | Shared source of truth | PostgreSQL campaign state |
+| `DURABLE_PARTITIONED` | Durable state under explicit partition ownership | possible future regional budget allocation |
+| `DERIVED_RECONSTRUCTABLE` | Rebuildable from durable authority/history | future serving projection |
+| `EPHEMERAL_INSTANCE_LOCAL` | Disposable instance/request state | request scratch data |
+
+Process-local state cannot silently become cross-instance authority. Future
+APIs, events, projection formats, database changes, and configuration also need
+N/N+1 compatibility because rolling deployments are not atomic. Kubernetes
+comes only after application semantics are proven under independent processes;
+it orchestrates correct replicas rather than creating correctness.
 
 ## Migration boundary
 
